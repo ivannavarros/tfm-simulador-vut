@@ -16,3 +16,4 @@ data/raw/
 
 # Variables de entorno
 .env
+src/models/rf_precio.pkl

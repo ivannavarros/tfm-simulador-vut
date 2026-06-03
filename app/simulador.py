@@ -36,7 +36,8 @@ def cargar_modelos():
         modelo_xgb = pickle.load(f)
     with open(os.path.join(MODELS, 'encoders_ocupacion.pkl'), 'rb') as f:
         encoders_xgb = pickle.load(f)
-    with open(os.path.join(MODELS, 'rf_precio.pkl'), 'rb') as f:
+      import gzip
+    with gzip.open(os.path.join(MODELS, 'rf_precio.pkl.gz'), 'rb') as f:
         modelo_rf = pickle.load(f)
     with open(os.path.join(MODELS, 'encoders_rf_precio.pkl'), 'rb') as f:
         encoders_rf = pickle.load(f)
