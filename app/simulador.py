@@ -120,6 +120,103 @@ def predecir_precio(ciudad, barrio, room_type, accommodates, bedrooms,
     }])
     return float(np.clip(modelo_rf.predict(X)[0], 20, 2000))
 
+def generar_informe(ciudad, barrio, resultados, ocupacion_pred, precio_pred,
+                    precio_compra, pct_financiado, horizonte):
+    """Genera informe ejecutivo automático basado en reglas"""
+
+    res_opt  = resultados['optimista']
+    res_neu  = resultados['neutro']
+    res_pes  = resultados['pesimista']
+
+    # Valoración de viabilidad
+    van_neutro = res_neu['van']
+    tir_neutro = res_neu['tir']
+    pm_neutro  = res_neu['punto_muerto_ocupacion']
+    rent_neta  = res_neu['rentabilidad_neta']
+
+    if van_neutro > 0:
+        viabilidad = "VIABLE"
+        color_viab = "success"
+        texto_viab = "La inversión genera valor por encima del coste de oportunidad del capital en el escenario neutro."
+    elif res_opt['van'] > 0:
+        viabilidad = "CONDICIONALMENTE VIABLE"
+        color_viab = "warning"
+        texto_viab = "La inversión es viable en el escenario optimista pero no en el neutro. Requiere que las condiciones de mercado sean favorables."
+    else:
+        viabilidad = "NO VIABLE EN EL HORIZONTE ANALIZADO"
+        color_viab = "error"
+        texto_viab = "La inversión no recupera el capital invertido en ninguno de los escenarios analizados dentro del horizonte temporal definido."
+
+    # Evaluación ocupación
+    if ocupacion_pred >= 0.60:
+        texto_ocup = f"La ocupacion estimada por el modelo XGBoost es del {ocupacion_pred*100:.1f}%, un nivel alto que favorece la rentabilidad del activo."
+    elif ocupacion_pred >= 0.40:
+        texto_ocup = f"La ocupacion estimada por el modelo XGBoost es del {ocupacion_pred*100:.1f}%, un nivel moderado coherente con la media del mercado de VUT en {ciudad.capitalize()}."
+    else:
+        texto_ocup = f"La ocupacion estimada por el modelo XGBoost es del {ocupacion_pred*100:.1f}%, un nivel bajo que limita significativamente la generacion de ingresos."
+
+    # Evaluación punto muerto
+    if pm_neutro:
+        margen = ocupacion_pred - pm_neutro
+        if margen > 0.15:
+            texto_pm = f"El punto muerto de ocupacion se situa en el {pm_neutro*100:.1f}%, lo que supone un margen de seguridad de {margen*100:.1f} puntos porcentuales sobre la ocupacion estimada. El proyecto presenta una resistencia solida ante caidas de demanda."
+        elif margen > 0:
+            texto_pm = f"El punto muerto de ocupacion se situa en el {pm_neutro*100:.1f}%, proxima a la ocupacion estimada ({ocupacion_pred*100:.1f}%). El margen de seguridad es reducido y el proyecto es sensible a variaciones en la demanda."
+        else:
+            texto_pm = f"El punto muerto de ocupacion ({pm_neutro*100:.1f}%) supera la ocupacion estimada ({ocupacion_pred*100:.1f}%). El proyecto no cubre sus costes totales con el nivel de demanda previsto."
+    else:
+        texto_pm = ""
+
+    # Evaluación financiación
+    if pct_financiado == 0:
+        texto_fin = "La operacion se financia integramente con capital propio, eliminando el riesgo de tipo de interes y mejorando la rentabilidad neta al no incurrir en costes financieros."
+    elif pct_financiado <= 0.50:
+        texto_fin = f"La operacion se financia con un {pct_financiado*100:.0f}% de capital ajeno, lo que introduce un nivel moderado de apalancamiento financiero. La cuota hipotecaria mensual es de {res_neu['cuota_mensual']:,.0f} EUR."
+    else:
+        texto_fin = f"La operacion presenta un nivel de apalancamiento elevado ({pct_financiado*100:.0f}% financiado). La cuota hipotecaria mensual de {res_neu['cuota_mensual']:,.0f} EUR supone una carga financiera significativa que condiciona el flujo de caja neto."
+
+    # Comparativa escenarios
+    texto_escenarios = f"El VAN oscila entre {res_pes['van']:,.0f} EUR (escenario pesimista) y {res_opt['van']:,.0f} EUR (escenario optimista), con un valor central de {res_neu['van']:,.0f} EUR en el escenario neutro. "
+    if tir_neutro:
+        texto_escenarios += f"La TIR del escenario neutro es del {tir_neutro*100:.1f}%."
+
+    informe = f"""
+**INFORME EJECUTIVO DE VIABILIDAD — {ciudad.upper()} / {barrio.upper()}**
+
+**Precio de adquisicion:** {precio_compra:,.0f} EUR | **Inversion total:** {res_neu['inversion_total']:,.0f} EUR | **Horizonte:** {horizonte} anos
+
+---
+
+**VEREDICTO: {viabilidad}**
+
+{texto_viab}
+
+---
+
+**Analisis de ocupacion y precio**
+
+{texto_ocup} El precio optimo estimado por el modelo Random Forest para este inmueble en {barrio} es de {precio_pred:.0f} EUR por noche, posicionandolo en el segmento {'premium' if precio_pred > 150 else 'medio-alto' if precio_pred > 100 else 'economico'} del mercado local.
+
+**Punto muerto de ocupacion**
+
+{texto_pm}
+
+**Estructura de financiacion**
+
+{texto_fin}
+
+**Comparativa de escenarios**
+
+{texto_escenarios}
+
+**Rentabilidad neta (escenario neutro):** {rent_neta*100:.1f}% | **ROE:** {res_neu['roe']*100:.1f}%
+
+---
+
+*Informe generado automaticamente por el Simulador VUT. Tiene caracter orientativo y no constituye asesoramiento financiero.*
+"""
+    return informe, color_viab
+
 # ── SIDEBAR ───────────────────────────────────────────────────
 with st.sidebar:
     st.header("📋 Parametros del inmueble")
@@ -431,6 +528,25 @@ with col2:
     negativos = shap_df[shap_df['Contribucion SHAP'] < 0]
     for _, row in negativos.iterrows():
         st.error(f"**{row['Variable']}** {row['Contribucion SHAP']:.4f}")
+
+st.markdown("---")
+
+# ── SECCIÓN 8: INFORME AUTOMATIZADO ──────────────────────────
+st.header("📄 Informe ejecutivo automatizado")
+st.markdown("Pulse el boton para generar un informe ejecutivo personalizado basado en los parametros introducidos.")
+
+if st.button("Generar informe ejecutivo", type="primary"):
+    with st.spinner("Generando informe..."):
+        informe, color_viab = generar_informe(
+            ciudad, barrio, resultados, ocupacion_pred, precio_pred,
+            precio_compra, pct_financiado, horizonte
+        )
+    if color_viab == "success":
+        st.success(informe)
+    elif color_viab == "warning":
+        st.warning(informe)
+    else:
+        st.error(informe)
 
 st.markdown("---")
 st.caption("Este simulador tiene finalidad academica y orientativa. No constituye asesoramiento financiero.")
