@@ -10,6 +10,8 @@ import pickle
 import os
 import sys
 import plotly.graph_objects as go
+import matplotlib.pyplot as plt
+import shap
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -42,11 +44,13 @@ def cargar_modelos():
         forecast_madrid = pickle.load(f)
     with open(os.path.join(MODELS, 'prophet_forecast_barcelona.pkl'), 'rb') as f:
         forecast_barcelona = pickle.load(f)
+    with open(os.path.join(MODELS, 'shap_xgb.pkl'), 'rb') as f:
+        shap_data = pickle.load(f)
 
     df = pd.read_csv(os.path.join(PROCESSED, 'listings_clean.csv'), low_memory=False)
-    return modelo_xgb, encoders_xgb, modelo_rf, encoders_rf, forecast_madrid, forecast_barcelona, df
+    return modelo_xgb, encoders_xgb, modelo_rf, encoders_rf, forecast_madrid, forecast_barcelona, shap_data, df
 
-modelo_xgb, encoders_xgb, modelo_rf, encoders_rf, forecast_madrid, forecast_barcelona, df = cargar_modelos()
+modelo_xgb, encoders_xgb, modelo_rf, encoders_rf, forecast_madrid, forecast_barcelona, shap_data, df = cargar_modelos()
 
 def predecir_ocupacion(ciudad, barrio, room_type, accommodates, bedrooms,
                        bathrooms, beds, price, minimum_nights, availability_365,
@@ -80,7 +84,7 @@ def predecir_ocupacion(ciudad, barrio, room_type, accommodates, bedrooms,
         'review_scores_location': review_scores_location,
         'review_scores_value': review_scores_value,
     }])
-    return float(np.clip(modelo_xgb.predict(X)[0], 0, 1))
+    return float(np.clip(modelo_xgb.predict(X)[0], 0, 1)), X
 
 def predecir_precio(ciudad, barrio, room_type, accommodates, bedrooms,
                     bathrooms, beds, minimum_nights, availability_365,
@@ -133,7 +137,7 @@ with st.sidebar:
     with col2:
         beds             = st.number_input("Camas", 1, 16, 2)
         minimum_nights   = st.number_input("Noches minimas", 1, 30, 2)
-        availability_365 = st.number_input("Dias disponibles al año", 30, 365, 300)
+        availability_365 = st.number_input("Dias disponibles al ano", 30, 365, 300)
 
     st.subheader("⭐ Puntuaciones esperadas")
     review_scores_rating      = st.slider("Valoracion general", 1.0, 5.0, 4.5, 0.1)
@@ -147,7 +151,7 @@ with st.sidebar:
     instant_bookable    = st.checkbox("Reserva instantanea", value=True)
 
 # ── PREDICCIONES ─────────────────────────────────────────────
-ocupacion_pred = predecir_ocupacion(
+ocupacion_pred, X_usuario = predecir_ocupacion(
     ciudad, barrio, room_type, accommodates, bedrooms, bathrooms, beds,
     100, minimum_nights, availability_365, int(host_is_superhost),
     host_listings_count, int(instant_bookable),
@@ -374,6 +378,59 @@ fig_sens.update_layout(
     height=400
 )
 st.plotly_chart(fig_sens, use_container_width=True)
+
+st.markdown("---")
+
+# ── SECCIÓN 7: SHAP ───────────────────────────────────────────
+st.header("🔬 Interpretabilidad del modelo (SHAP)")
+st.markdown("Factores que mas influyen en la ocupacion predicha para este inmueble concreto.")
+
+feature_names_legibles = [
+    'Ciudad', 'Barrio', 'Tipo alojamiento',
+    'Huespedes', 'Habitaciones', 'Banos', 'Camas',
+    'Precio/noche', 'Noches minimas', 'Disponibilidad anual',
+    'Superhost', 'Anuncios host', 'Reserva instantanea',
+    'Valoracion general', 'Limpieza', 'Ubicacion', 'Calidad-precio'
+]
+
+explainer_xgb = shap_data['explainer_xgb']
+shap_values_usuario = explainer_xgb.shap_values(X_usuario)
+
+shap_df = pd.DataFrame({
+    'Variable': feature_names_legibles,
+    'Contribucion SHAP': shap_values_usuario[0],
+    'Valor': X_usuario.values[0]
+}).sort_values('Contribucion SHAP', key=abs, ascending=False).head(10)
+
+colores_shap = ['#2ecc71' if v > 0 else '#e74c3c' for v in shap_df['Contribucion SHAP']]
+
+fig_shap = go.Figure(go.Bar(
+    x=shap_df['Contribucion SHAP'],
+    y=shap_df['Variable'],
+    orientation='h',
+    marker_color=colores_shap,
+))
+fig_shap.update_layout(
+    title="Contribucion de cada variable a la ocupacion predicha (SHAP)",
+    xaxis_title="Contribucion SHAP (positivo = aumenta ocupacion)",
+    yaxis_title="",
+    height=450,
+    yaxis=dict(autorange='reversed')
+)
+st.plotly_chart(fig_shap, use_container_width=True)
+
+col1, col2 = st.columns(2)
+with col1:
+    st.subheader("Factores que aumentan la ocupacion")
+    positivos = shap_df[shap_df['Contribucion SHAP'] > 0]
+    for _, row in positivos.iterrows():
+        st.success(f"**{row['Variable']}** +{row['Contribucion SHAP']:.4f}")
+
+with col2:
+    st.subheader("Factores que reducen la ocupacion")
+    negativos = shap_df[shap_df['Contribucion SHAP'] < 0]
+    for _, row in negativos.iterrows():
+        st.error(f"**{row['Variable']}** {row['Contribucion SHAP']:.4f}")
 
 st.markdown("---")
 st.caption("Este simulador tiene finalidad academica y orientativa. No constituye asesoramiento financiero.")
