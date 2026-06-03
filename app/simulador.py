@@ -36,9 +36,11 @@ def cargar_modelos():
         modelo_xgb = pickle.load(f)
     with open(os.path.join(MODELS, 'encoders_ocupacion.pkl'), 'rb') as f:
         encoders_xgb = pickle.load(f)
-      import gzip
+        
+    import gzip
     with gzip.open(os.path.join(MODELS, 'rf_precio.pkl.gz'), 'rb') as f:
         modelo_rf = pickle.load(f)
+        
     with open(os.path.join(MODELS, 'encoders_rf_precio.pkl'), 'rb') as f:
         encoders_rf = pickle.load(f)
     with open(os.path.join(MODELS, 'prophet_forecast_madrid.pkl'), 'rb') as f:
@@ -47,6 +49,9 @@ def cargar_modelos():
         forecast_barcelona = pickle.load(f)
     with open(os.path.join(MODELS, 'shap_xgb.pkl'), 'rb') as f:
         shap_data = pickle.load(f)
+        
+    df = pd.read_csv(os.path.join(PROCESSED, 'listings_clean.csv'), low_memory=False)
+    return modelo_xgb, encoders_xgb, modelo_rf, encoders_rf, forecast_madrid, forecast_barcelona, shap_data, df
 
     df = pd.read_csv(os.path.join(PROCESSED, 'listings_clean.csv'), low_memory=False)
     return modelo_xgb, encoders_xgb, modelo_rf, encoders_rf, forecast_madrid, forecast_barcelona, shap_data, df
